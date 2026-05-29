@@ -157,8 +157,16 @@ if app_mode == "Price Prediction":
     col1, col2, col3 = st.columns(3)
     
     with col1:
-        location = st.selectbox("Location", ["Downtown", "Suburbs", "Waterfront", "Historic", "Commercial"])
-        property_type = st.selectbox("Property Type", ["Apartment", "House", "Condo", "Townhouse", "Villa"])
+        location = st.selectbox(
+            "Location",
+            ["Downtown", "Suburbs", "Waterfront", "Historic", "Commercial"]
+        )
+
+        property_type = st.selectbox(
+            "Property Type",
+            ["Apartment", "House", "Condo", "Townhouse", "Villa"]
+        )
+
         area_sqft = st.slider("Area (Sq Ft)", 500, 10000, 2500, 100)
     
     with col2:
@@ -172,47 +180,64 @@ if app_mode == "Price Prediction":
         has_pool = st.checkbox("Has Pool", value=False)
         has_garage = st.checkbox("Has Garage", value=True)
     
-    # Prepare input - FIX: Use proper encoding
+    # Encode categorical variables
     location_encoded = st.session_state.location_encoder.transform([location])[0]
     property_type_encoded = st.session_state.property_type_encoder.transform([property_type])[0]
     
-    input_data = pd.DataFrame({
-        "location_encoded": [location_encoded],
-        "property_type_encoded": [property_type_encoded],
-        "area_sqft": [area_sqft],
-        "num_rooms": [num_rooms],
-        "num_bedrooms": [num_bedrooms],
-        "num_bathrooms": [num_bathrooms],
-        "property_age": [property_age],
-        "parking_spaces": [parking_spaces],
-        "has_pool": [int(has_pool)],
-        "has_garage": [int(has_garage)],
-        "area_sqft_squared": [area_sqft ** 2],
-        "property_age_log": [np.log1p(property_age)],
-        "rooms_x_area": [num_rooms * area_sqft],
-    })
-    
-    # Make prediction
+    # Create input dictionary
+    input_dict = {
+        "location_encoded": location_encoded,
+        "property_type_encoded": property_type_encoded,
+        "area_sqft": area_sqft,
+        "num_rooms": num_rooms,
+        "num_bedrooms": num_bedrooms,
+        "num_bathrooms": num_bathrooms,
+        "property_age": property_age,
+        "parking_spaces": parking_spaces,
+        "has_pool": int(has_pool),
+        "has_garage": int(has_garage),
+        "area_sqft_squared": area_sqft ** 2,
+        "property_age_log": np.log1p(property_age),
+        "rooms_x_area": num_rooms * area_sqft,
+    }
+
+    # Create dataframe
+    input_data = pd.DataFrame([input_dict])
+
+    # IMPORTANT FIX:
+    # Match exact training feature order
+    input_data = input_data[feature_cols]
+
+    # Scale input
     input_scaled = scaler.transform(input_data)
+
+    # Predict
     predicted_price = model.predict(input_scaled)[0]
     
     # Display prediction
     st.markdown("---")
+    
     col1, col2 = st.columns([2, 1])
     
     with col1:
         st.markdown(f"""
-        <div style="background: linear-gradient(135deg, #27AE60 0%, #0F7173 100%);
-                    color: white; padding: 30px; border-radius: 10px; text-align: center;">
+        <div style="
+            background: linear-gradient(135deg, #27AE60 0%, #0F7173 100%);
+            color: white;
+            padding: 30px;
+            border-radius: 10px;
+            text-align: center;
+        ">
             <h2 style="margin: 0; color: white;">Predicted Price</h2>
-            <h1 style="margin: 10px 0 0 0; color: white;">₹{predicted_price:,.0f}</h1>
+            <h1 style="margin: 10px 0 0 0; color: white;">
+                ₹{predicted_price:,.0f}
+            </h1>
         </div>
         """, unsafe_allow_html=True)
     
     with col2:
-        # Market comparison
         market_price = df_data[
-            (df_data["property_type"] == property_type) & 
+            (df_data["property_type"] == property_type) &
             (df_data["location"] == location)
         ]["price"].mean()
         
@@ -221,13 +246,17 @@ if app_mode == "Price Prediction":
         st.metric("Market Avg", f"₹{market_price:,.0f}")
         st.metric("vs Market", f"{variance:+.1f}%")
     
-    # Confidence
+    # Confidence metrics
     st.markdown("---")
+    
     col1, col2, col3 = st.columns(3)
+    
     with col1:
         st.metric("Model R² Score", f"{r2_score:.4f}")
+    
     with col2:
         st.metric("Confidence Interval", "±₹50K (95%)")
+    
     with col3:
         st.metric("Training Data", f"{len(df_data):,} properties")
     
@@ -235,22 +264,35 @@ if app_mode == "Price Prediction":
     st.markdown("### 📊 Price Drivers Impact")
     
     drivers = {
-        "Area (Sq Ft)": f"₹{area_sqft * 200:,.0f}",
-        "Bedrooms": f"₹{num_bedrooms * 100000:,.0f}",
-        "Bathrooms": f"₹{num_bathrooms * 50000:,.0f}",
-        "Property Age": f"₹{-property_age * 2000:,.0f}",
-        "Pool": f"₹{50000 if has_pool else 0:,.0f}",
-        "Garage": f"₹{30000 if has_garage else 0:,.0f}",
+        "Area (Sq Ft)": area_sqft * 200,
+        "Bedrooms": num_bedrooms * 100000,
+        "Bathrooms": num_bathrooms * 50000,
+        "Property Age": -property_age * 2000,
+        "Pool": 50000 if has_pool else 0,
+        "Garage": 30000 if has_garage else 0,
     }
     
-    drivers_df = pd.DataFrame(list(drivers.items()), columns=["Feature", "Impact"])
+    drivers_df = pd.DataFrame({
+        "Feature": list(drivers.keys()),
+        "Impact": list(drivers.values())
+    })
     
-    fig = px.bar(drivers_df, x="Feature", y="Impact", 
-                 color="Impact",
-                 color_continuous_scale="RdYlGn",
-                 title="Price Contribution by Feature")
-    fig.update_layout(height=400, showlegend=False, margin=dict(l=0, r=0, t=40, b=0))
-    st.plotly_chart(fig, use_container_width=True)
+    fig = px.bar(
+        drivers_df,
+        x="Feature",
+        y="Impact",
+        color="Impact",
+        color_continuous_scale="RdYlGn",
+        title="Price Contribution by Feature"
+    )
+
+    fig.update_layout(
+        height=400,
+        showlegend=False,
+        margin=dict(l=0, r=0, t=40, b=0)
+    )
+
+    st.plotly_chart(fig, width='stretch')
 
 
 # ══════════════════════════════════════════════════════════════════
